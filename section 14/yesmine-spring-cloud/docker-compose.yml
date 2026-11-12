@@ -1,0 +1,164 @@
+services:
+  eurekaserver:
+    build: ./eurekaserver
+    container_name: eurekaserver
+    #    ports:
+    #      - "8761:8761"
+    environment:
+      - EUREKA_SERVER_USEREADONLYRESPONSECACHE=false
+      - EUREKA_SERVER_RESPONSECACHEUPDATEINTERVALMS=3000
+    healthcheck:
+      test: "curl --fail --silent localhost:8761/actuator/health | grep UP || exit 1"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+  configserver:
+    build: ./configserver
+    container_name: configserver
+    #    ports:
+    #      - "9999:9998"
+    environment:
+      - SPRING_RABBITMQ_HOST=rabbitmq
+      - MANAGEMENT_HEALTH_RABBIT_ENABLED=false
+      - SPRING_CLOUD_CONFIG_SERVER_GIT_TIMEOUT=60
+      - SPRING_CLOUD_CONFIG_SERVER_GIT_CLONEONSTART=false
+    restart: on-failure
+    healthcheck:
+      test: "curl --fail --silent localhost:9998/actuator/health/liveness | grep UP || exit 1"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  types-ms:
+    build: ./type-microservice
+    container_name: types-ms
+    #    ports:
+    #      - "8081:8081"
+    environment:
+      - DISCOVERY_SERVICE_URL=http://eurekaserver:8761/eureka
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eurekaserver:8761/eureka
+      - CONFIG_SERVICE_URL=http://configserver:9998
+      - EUREKA_INSTANCE_HOSTNAME=types-ms
+      - EUREKA_INSTANCE_PREFERIPADDRESS=false
+      - SPRING_RABBITMQ_HOST=rabbitmq
+    healthcheck:
+      test: "curl --fail --silent localhost:8080/actuator/health | grep UP || exit 1"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      eurekaserver:
+        condition: service_healthy
+      configserver:
+        condition: service_healthy
+
+  games-ms:
+    build: ./game-microservice
+    container_name: games-ms
+    ports:
+      - "8089:8089"
+    environment:
+      - DISCOVERY_SERVICE_URL=http://eurekaserver:8761/eureka
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eurekaserver:8761/eureka
+      - CONFIG_SERVICE_URL=http://configserver:9998
+      - EUREKA_INSTANCE_HOSTNAME=games-ms
+      - EUREKA_INSTANCE_PREFERIPADDRESS=false
+      - SPRING_RABBITMQ_HOST=rabbitmq
+      - MANAGEMENT_HEALTH_RABBIT_ENABLED=false
+    healthcheck:
+      test: "curl --fail --silent localhost:8089/actuator/health | grep UP || exit 1"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      eurekaserver:
+        condition: service_healthy
+      configserver:
+        condition: service_healthy
+      types-ms:
+        condition: service_healthy
+
+  message:
+    build: ./message
+    container_name: message-ms
+    environment:
+      - SPRING_RABBITMQ_HOST=rabbitmq
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: rabbitmq-diagnostics check_port_connectivity
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  postgres:
+    image: postgres:16
+    container_name: kc-postgres-dev
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+    volumes:
+      - kc_pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3.4
+    container_name: keycloak
+    command: start-dev
+    environment:
+      - KC_DB=postgres
+      - KC_DB_URL=jdbc:postgresql://postgres:5432/keycloak
+      - KC_DB_USERNAME=keycloak
+      - KC_DB_PASSWORD=keycloak
+      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+
+  gatewayserver:
+    build: ./gatewayserver
+    container_name: gatewayserver
+    ports:
+      - "8888:8888"
+    environment:
+      - DISCOVERY_SERVICE_URL=http://eurekaserver:8761/eureka
+      - EUREKA_CLIENT_REGISTRYFETCHINTERVALSECONDS=5
+      - SPRING_CLOUD_LOADBALANCER_CACHE_TTL=5s
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=http://keycloak:8080/realms/master/protocol/openid-connect/certs
+      - LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY=DEBUG
+    depends_on:
+      eurekaserver:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+      types-ms:
+        condition: service_healthy
+      games-ms:
+        condition: service_healthy
+
+volumes:
+  kc_pg_data:

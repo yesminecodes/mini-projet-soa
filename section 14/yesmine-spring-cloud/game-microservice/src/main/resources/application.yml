@@ -1,0 +1,61 @@
+server:
+  port: 8089
+
+spring:
+  application:
+    name: game
+  datasource:
+    url: 'jdbc:h2:mem:gamesdb'
+  h2:
+    console:
+      enabled: true
+  jpa:
+    show-sql: true
+    hibernate:
+      ddl-auto: update
+  cloud:
+    function:
+      definition: updateCommunication
+    stream:
+      bindings:
+        sendCommunication-out-0:
+          destination: send-communication
+        dateCommunication-in-0:
+          destination: communication-sent
+          group: ${spring.application.name}
+    openfeign:
+      circuitbreaker:
+        enabled: true
+    config:
+      enabled: false
+    discovery:
+      enabled: true
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+    connection-timeout: 10s
+
+
+eureka:
+  client:
+    service-url:
+      defaultZone: 'http://localhost:8761/eureka/'
+  instance:
+    prefer-ip-address: true
+    hostname: localhost
+
+resilience4j.circuitbreaker:
+  configs:
+    default:
+      slidingWindowSize: 10
+      permittedNumberOfCallsInHalfOpenState: 2
+      failureRateThreshold: 50
+      waitDurationInOpenState: 10000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: '*'
